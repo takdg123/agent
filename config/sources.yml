@@ -1,0 +1,19 @@
+# arXiv sources only - focused on kilonovae, GRBs, and related astrophysics
+feeds:
+  # General astro-ph.HE (latest 50 papers)
+  - url: "https://export.arxiv.org/api/query?search_query=cat:astro-ph.HE&start=0&max_results=50&sortBy=submittedDate&sortOrder=descending"
+
+  # Kilonova-specific search in astro-ph.HE
+  - url: "https://export.arxiv.org/api/query?search_query=all:kilonova+AND+cat:astro-ph.HE&start=0&max_results=50&sortBy=submittedDate&sortOrder=descending"
+
+  # GRB / gamma-ray burst search in astro-ph.HE
+  - url: "https://export.arxiv.org/api/query?search_query=all:GRB+AND+cat:astro-ph.HE&start=0&max_results=50&sortBy=submittedDate&sortOrder=descending"
+
+  # Exact "gamma-ray burst" phrase search in astro-ph.HE
+  - url: "https://export.arxiv.org/api/query?search_query=all:%22gamma-ray%20burst%22+AND+cat:astro-ph.HE&start=0&max_results=50&sortBy=submittedDate&sortOrder=descending"
+
+# Focused keywords for kilonovae and GRB research
+keywords: ["kilonova", "kilonovae", "AT2017gfo", "GRB", "gamma-ray burst", "GRBs", "gamma-ray bursts"]
+
+lang: "en"
+

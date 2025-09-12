@@ -1,0 +1,20 @@
+# Prompt Configuration for TORRI System
+# Maps prompt names to their file paths and settings
+
+prompts:
+  paper_summary:
+    file: "paper_summary.txt"
+    description: "Template for generating individual paper summaries"
+    enabled: true
+    
+  # Add more prompts here as needed
+  # example_prompt:
+  #   file: "example.txt"
+  #   description: "Description of this prompt"
+  #   enabled: false
+
+# Global prompt settings
+settings:
+  default_encoding: "utf-8"
+  fallback_to_default: true
+  cache_prompts: false

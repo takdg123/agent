@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily Research Paper Processing
+After=network.target
+
+[Service]
+Type=oneshot
+User=dtak
+WorkingDirectory=/home/dtak/torri
+Environment=PATH=/home/dtak/miniconda3/envs/torri/bin:/home/dtak/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/dtak/miniconda3/envs/torri/bin/python /home/dtak/torri/src/daily_report.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
