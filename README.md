@@ -44,10 +44,14 @@ Daily Workflow:
 📚 Recall similar past papers + running topic notes
   ↓
 🔬 Analyze with 6 Expert Agents:
-  • GRB Expert (AstroSage-70B)
-  • Kilonova Expert (AstroSage-70B)
+  • Domain experts (AstroSage-70B), only those whose domain the paper
+    touches, strongest first, each seeing the reviews already written:
+      – GRB Expert
+      – Kilonova Expert
   • Astrophysicist (Qwen2.5:32B)  → synthesis
-  • Critic (Qwen2.5:32B)          → quality score
+  • Critic (Qwen2.5:32B)          → scores it
+       ↳ below threshold, back to the Astrophysicist to revise,
+         then re-reviewed (up to 2 rounds; best version wins)
   • Writer (Qwen2.5:32B)          → polishes the English
   • Language Expert (Qwen2.5:32B) → translates the FINAL English
   ↓
@@ -103,6 +107,12 @@ except one PDF-extraction test that uses a cached PDF if present.
 - **Python**: 3.12+
 - **Ollama**: Latest version
 - **Disk**: ~60GB for models
+
+> **Two GPUs?** By default the ollama unit pins `CUDA_VISIBLE_DEVICES=0`, so
+> AstroSage (42.5GB) and Qwen (21.7GB) cannot both stay resident in one 48GB card
+> and a model is reloaded on every paper. See
+> [docs/ollama-two-gpu-setup.md](docs/ollama-two-gpu-setup.md) — worth roughly
+> 7 minutes of a 40 minute run.
 
 ## Documentation
 
