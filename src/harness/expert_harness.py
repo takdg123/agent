@@ -61,6 +61,40 @@ class ExpertHarness:
         
         print(f"✅ Initialized {len(experts)} expert agents")
     
+    # Cues that a paper is in a specialist's domain. Checked against title,
+    # abstract, and the triage topic tags.
+    GRB_CUES = ("grb", "gamma-ray burst", "gamma ray burst", "afterglow",
+                "prompt emission", "swift", "fermi", "magnetar", "jet break",
+                "central engine", "sgrb", "lgrb")
+    # Deliberately excludes "ejecta" and "nucleosynthesis": both are common in
+    # supernova papers, and "SN ejecta" wrongly pulled in the kilonova expert.
+    KILONOVA_CUES = ("kilonova", "neutron star merger", "r-process", "gw170817",
+                     "at2017gfo", "ns-ns", "ns merger", "nsbh", "bns",
+                     "binary neutron star", "lanthanide", "neutron-rich ejecta")
+
+    @classmethod
+    def select_experts(cls, paper: Dict[str, Any]) -> tuple:
+        """
+        Decide which domain experts a paper warrants.
+
+        Returns:
+            (run_grb, run_kilonova)
+
+        When neither domain is detected both experts run: an unrecognised paper
+        must not silently lose all specialist review.
+        """
+        haystack = " ".join([
+            paper.get("title") or "",
+            paper.get("abstract") or "",
+            " ".join(paper.get("topic_tags") or []),
+        ]).lower()
+
+        run_grb = any(cue in haystack for cue in cls.GRB_CUES)
+        run_kilonova = any(cue in haystack for cue in cls.KILONOVA_CUES)
+        if not (run_grb or run_kilonova):
+            return True, True
+        return run_grb, run_kilonova
+
     def analyze_paper_multi_expert(self, paper: Dict[str, Any], use_memory: bool = True) -> Dict[str, Any]:
         """
         Comprehensive multi-expert paper analysis
@@ -93,38 +127,50 @@ class ExpertHarness:
                 print(f"📚 Recall: {len(context['similar'])} similar papers, "
                       f"{len(context['topic_notes'])} topic notes")
         
-        # Step 1: GRB Expert Review
-        print("\n🌟 Step 1: GRB Expert Review...")
-        grb_task = AgentTask(
-            task_type="grb_review",
-            description="GRB expert analysis",
-            input_data={"paper": paper, "previous_analysis": recalled_lines},
-            required_capabilities=[AgentCapability.TEXT_ANALYSIS],
-            priority=10
-        )
-        grb_task_id = self.coordinator.submit_task(grb_task)
-        
-        # Step 2: Kilonova Expert Review
-        print("💫 Step 2: Kilonova Expert Review...")
-        kn_task = AgentTask(
-            task_type="kilonova_review",
-            description="Kilonova expert analysis",
-            input_data={"paper": paper, "previous_analysis": recalled_lines},
-            required_capabilities=[AgentCapability.TEXT_ANALYSIS],
-            priority=10
-        )
-        kn_task_id = self.coordinator.submit_task(kn_task)
-        
-        # Execute expert reviews in parallel
+        # Steps 1-2: domain experts, only those whose domain the paper touches.
+        # Running the kilonova expert on a pure GRB paper cost ~38s and fed an
+        # empty review into the synthesis.
+        run_grb, run_kn = self.select_experts(paper)
+
+        grb_task_id = kn_task_id = None
+        if run_grb:
+            print("\n🌟 Step 1: GRB Expert Review...")
+            grb_task_id = self.coordinator.submit_task(AgentTask(
+                task_type="grb_review",
+                description="GRB expert analysis",
+                input_data={"paper": paper, "previous_analysis": recalled_lines},
+                required_capabilities=[AgentCapability.TEXT_ANALYSIS],
+                priority=10
+            ))
+        else:
+            print("\n⏭️  Step 1: GRB Expert skipped (not a GRB paper)")
+
+        if run_kn:
+            print("💫 Step 2: Kilonova Expert Review...")
+            kn_task_id = self.coordinator.submit_task(AgentTask(
+                task_type="kilonova_review",
+                description="Kilonova expert analysis",
+                input_data={"paper": paper, "previous_analysis": recalled_lines},
+                required_capabilities=[AgentCapability.TEXT_ANALYSIS],
+                priority=10
+            ))
+        else:
+            print("⏭️  Step 2: Kilonova Expert skipped (not a kilonova/merger paper)")
+
+        # Executed sequentially: both experts share one 42GB model, so running
+        # them concurrently would thrash VRAM.
         results = self.coordinator.execute_all_tasks()
         result_map = {r.task_id: r for r in results}
-        
+
         # Collect expert reviews
         expert_reviews = []
-        grb_result = result_map.get(grb_task_id)
-        kn_result = result_map.get(kn_task_id)
-        
-        for label, result in (("GRB Expert", grb_result), ("Kilonova Expert", kn_result)):
+        grb_result = result_map.get(grb_task_id) if grb_task_id else None
+        kn_result = result_map.get(kn_task_id) if kn_task_id else None
+
+        for label, task_id, result in (("GRB Expert", grb_task_id, grb_result),
+                                       ("Kilonova Expert", kn_task_id, kn_result)):
+            if task_id is None:
+                continue
             if result and result.success:
                 expert_reviews.append(result.output_data)
                 print(f"   ✅ {label} (confidence: {result.output_data.get('confidence', 0):.2f})")
