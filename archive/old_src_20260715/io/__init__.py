@@ -4,5 +4,6 @@ Handles file I/O operations including PDF processing
 """
 
 from .pdf import PDFProcessor
+from .vision import VisionProcessor
 
-__all__ = ["PDFProcessor"]
+__all__ = ["PDFProcessor", "VisionProcessor"]

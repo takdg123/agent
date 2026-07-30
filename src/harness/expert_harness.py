@@ -4,6 +4,7 @@ Expert Harness - Multi-Expert Agent Orchestration
 Coordinates GRB Expert, Kilonova Expert, Astrophysicist, Language Expert, Critic, and Writer
 """
 
+from pathlib import Path
 from typing import Dict, Any, List
 from .base import AgentTask, AgentCapability
 from .coordinator import AgentCoordinator
@@ -11,8 +12,9 @@ from .expert_agents import (
     GRBExpertAgent, KilonovaExpertAgent, AstrophysicistAgent,
     LanguageExpertAgent, CriticAgent, WriterAgent
 )
-from .memory_manager import MemoryManager
-import re
+from .knowledge_store import KnowledgeStore
+from ..utils import key_numbers
+from ..utils.llm_client import LLMClient
 
 class ExpertHarness:
     """
@@ -32,8 +34,14 @@ class ExpertHarness:
         self.config = config
         self.llm_manager = llm_manager
         self.coordinator = AgentCoordinator(config)
-        self.memory = MemoryManager()
-        
+
+        general_model = getattr(config, 'general_model', 'qwen2.5:32b') if config else 'qwen2.5:32b'
+        self._number_llm = LLMClient(model=general_model)
+        self.memory = KnowledgeStore(
+            data_dir=getattr(config, 'data_dir', None) if config else None,
+            llm=self._number_llm,
+        )
+
         # Initialize all expert agents
         self._initialize_experts()
     
@@ -75,19 +83,22 @@ class ExpertHarness:
         print(f"🔬 Multi-Expert Analysis: {paper.get('title', 'Unknown')[:60]}...")
         print(f"{'='*70}")
         
-        # Step 0: Check memory for context
+        # Step 0: Recall related past work
         context = {}
+        recalled_lines = []
         if use_memory:
-            context = self.memory.get_context_for_paper(paper)
+            context = self.memory.recall(paper)
+            recalled_lines = self.memory.as_context_lines(context)
             if context.get('has_history'):
-                print(f"📚 Memory: {context.get('summary')}")
+                print(f"📚 Recall: {len(context['similar'])} similar papers, "
+                      f"{len(context['topic_notes'])} topic notes")
         
         # Step 1: GRB Expert Review
         print("\n🌟 Step 1: GRB Expert Review...")
         grb_task = AgentTask(
-            task_type="expert_review",
+            task_type="grb_review",
             description="GRB expert analysis",
-            input_data={"paper": paper, "previous_analysis": context.get('previous_insights', [])},
+            input_data={"paper": paper, "previous_analysis": recalled_lines},
             required_capabilities=[AgentCapability.TEXT_ANALYSIS],
             priority=10
         )
@@ -96,9 +107,9 @@ class ExpertHarness:
         # Step 2: Kilonova Expert Review
         print("💫 Step 2: Kilonova Expert Review...")
         kn_task = AgentTask(
-            task_type="expert_review",
+            task_type="kilonova_review",
             description="Kilonova expert analysis",
-            input_data={"paper": paper, "previous_analysis": context.get('previous_insights', [])},
+            input_data={"paper": paper, "previous_analysis": recalled_lines},
             required_capabilities=[AgentCapability.TEXT_ANALYSIS],
             priority=10
         )
@@ -149,47 +160,23 @@ class ExpertHarness:
             # Without a synthesis there is nothing to report or translate.
             raise RuntimeError(f"synthesis failed: {reason}")
         
-        # Step 4: Language Expert - Korean Translation
-        print("\n🌐 Step 4: Korean Translation...")
-        lang_task = AgentTask(
-            task_type="korean_summary",
-            description="Korean summary generation",
-            input_data={
-                "paper": paper,
-                "english_analysis": english_analysis
-            },
-            required_capabilities=[AgentCapability.SUMMARIZATION],
-            priority=8
-        )
-        lang_task_id = self.coordinator.submit_task(lang_task)
-        
-        results = self.coordinator.execute_all_tasks()
-        result_map = {r.task_id: r for r in results}
-        
-        lang_result = result_map.get(lang_task_id)
-        korean_summary = ""
-        if lang_result and lang_result.success:
-            korean_summary = lang_result.output_data.get('korean_summary', '')
-            print(f"   ✅ Korean summary ({len(korean_summary)} chars)")
-        
-        # Step 5: Critic Review
-        print("\n🎯 Step 5: Critical Review...")
+        # Step 4: Critic Review (English only; nothing is translated yet)
+        print("\n🎯 Step 4: Critical Review...")
         critic_task = AgentTask(
             task_type="quality_review",
             description="Quality review and critique",
             input_data={
                 "paper": paper,
-                "analysis": english_analysis,
-                "korean_summary": korean_summary
+                "analysis": english_analysis
             },
             required_capabilities=[AgentCapability.COMPARISON],
-            priority=7
+            priority=8
         )
         critic_task_id = self.coordinator.submit_task(critic_task)
-        
+
         results = self.coordinator.execute_all_tasks()
         result_map = {r.task_id: r for r in results}
-        
+
         critic_result = result_map.get(critic_task_id)
         critique = ""
         quality_score = 7.0
@@ -197,70 +184,105 @@ class ExpertHarness:
             critique = critic_result.output_data.get('critique', '')
             quality_score = critic_result.output_data.get('quality_score', 7.0)
             print(f"   ✅ Quality Score: {quality_score}/10")
-        
-        # Step 6: Writer Polish (if quality is acceptable)
+        else:
+            reason = critic_result.error_message if critic_result else "no result returned"
+            print(f"   ❌ Critic FAILED: {reason}")
+
+        # Step 5: Writer polishes the English
         final_english = english_analysis
-        final_korean = korean_summary
-        
+
         if quality_score >= 6.0:
-            print("\n✍️  Step 6: Final Polish...")
+            print("\n✍️  Step 5: Final Polish (English)...")
             writer_task = AgentTask(
                 task_type="polish",
                 description="Final polishing",
                 input_data={
                     "paper": paper,
                     "analysis": english_analysis,
-                    "korean_summary": korean_summary,
                     "critique": critique
                 },
                 required_capabilities=[AgentCapability.SYNTHESIS],
-                priority=6
+                priority=7
             )
             writer_task_id = self.coordinator.submit_task(writer_task)
-            
+
             results = self.coordinator.execute_all_tasks()
             result_map = {r.task_id: r for r in results}
-            
+
             writer_result = result_map.get(writer_task_id)
             if writer_result and writer_result.success:
-                polished = writer_result.output_data.get('polished_content', '')
-                
-                # Extract English and Korean from polished content
-                eng_match = re.search(r'\*\*English Analysis:\*\*\s*(.+?)(?=\*\*한국어 요약:\*\*|$)', polished, re.DOTALL)
-                kor_match = re.search(r'\*\*한국어 요약:\*\*\s*(.+?)$', polished, re.DOTALL)
-                
-                if eng_match:
-                    final_english = eng_match.group(1).strip()
-                if kor_match:
-                    final_korean = kor_match.group(1).strip()
-                
-                print(f"   ✅ Polished and finalized")
+                polished = (writer_result.output_data.get('polished_content') or '').strip()
+                if polished:
+                    final_english = polished
+                    print(f"   ✅ Polished ({len(final_english)} chars)")
+            else:
+                reason = writer_result.error_message if writer_result else "no result returned"
+                print(f"   ⚠️  Polish failed ({reason}); keeping the synthesis")
         else:
             print(f"\n⚠️  Quality too low ({quality_score}/10), skipping final polish")
-        
-        # Step 7: Store in memory
-        if use_memory and quality_score >= 6.0:
-            print("\n📚 Storing in memory...")
-            analysis_data = {
-                'english': final_english,
-                'korean': final_korean,
-                'expert_reviews': expert_reviews,
-                'quality_score': quality_score
-            }
-            self.memory.store_paper_analysis(paper, analysis_data)
-        
-        execution_time = time.time() - start_time
-        
-        print(f"\n✅ Multi-expert analysis complete in {execution_time:.1f}s")
-        print(f"{'='*70}\n")
-        
-        return {
+
+        # Step 6: Translate the FINAL English. Translating last is what keeps the
+        # two languages saying the same thing - previously Korean was derived from
+        # the pre-polish draft and then diverged when the writer rewrote English.
+        print("\n🌐 Step 6: Korean Translation (of the final English)...")
+        lang_task = AgentTask(
+            task_type="korean_summary",
+            description="Korean translation",
+            input_data={
+                "paper": paper,
+                "english_analysis": final_english
+            },
+            required_capabilities=[AgentCapability.SUMMARIZATION],
+            priority=6
+        )
+        lang_task_id = self.coordinator.submit_task(lang_task)
+
+        results = self.coordinator.execute_all_tasks()
+        result_map = {r.task_id: r for r in results}
+
+        lang_result = result_map.get(lang_task_id)
+        final_korean = ""
+        if lang_result and lang_result.success:
+            final_korean = lang_result.output_data.get('korean_summary', '')
+            print(f"   ✅ Korean translation ({len(final_korean)} chars)")
+        else:
+            reason = lang_result.error_message if lang_result else "no result returned"
+            print(f"   ❌ Translation FAILED: {reason}")
+
+        # Step 7: Key numbers for the top of the report card
+        print("\n🔢 Step 7: Key Numbers...")
+        numbers = key_numbers.extract(
+            self._number_llm, paper,
+            model=getattr(self.config, 'general_model', None),
+            prompt_dir=Path(self.config.root_dir) / "prompts" if self.config else None,
+        )
+        print(f"   ✅ {len(numbers)} key numbers extracted")
+
+        analysis_data = {
             'english': final_english,
             'korean': final_korean,
             'expert_reviews': expert_reviews,
             'quality_score': quality_score,
+            'key_numbers': numbers,
+            'topic_tags': paper.get('topic_tags') or [],
+            'relevance_score': paper.get('relevance_score'),
+        }
+
+        # Step 8: Remember it
+        if use_memory and quality_score >= 6.0:
+            print("\n📚 Storing in knowledge base...")
+            self.memory.record(paper, analysis_data)
+
+        execution_time = time.time() - start_time
+
+        print(f"\n✅ Multi-expert analysis complete in {execution_time:.1f}s")
+        print(f"{'='*70}\n")
+
+        return {
+            **analysis_data,
             'critique': critique,
             'used_memory': context.get('has_history', False),
+            'text_source': (paper.get('contents') or {}).get('source', 'abstract'),
             'execution_time': execution_time,
             'grb_confidence': grb_result.output_data.get('confidence', 0) if grb_result and grb_result.success else 0,
             'kilonova_confidence': kn_result.output_data.get('confidence', 0) if kn_result and kn_result.success else 0

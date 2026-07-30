@@ -1,21 +1,17 @@
 """
-Agent - Research Paper Management System
-A class-based architecture for paper ingestion, analysis, and reporting
+TORRI - Research Paper Management System
+Refactored modular architecture for paper ingestion, analysis, and reporting
 """
 
 __version__ = "2.0.0"
-__author__ = "Agent Development Team"
+__author__ = "TORRI Development Team"
 
+# Core modules
 from .config import Config
-from .io.pdf import PDFProcessor
 from .database import DatabaseManager
-from .llm import LLMAnalyzer
-from .agent import Agent
 
+# Only import modules that exist in refactored code
 __all__ = [
     "Config",
-    "PDFProcessor", 
-    "DatabaseManager",
-    "LLMAnalyzer",
-    "Agent"
+    "DatabaseManager"
 ]

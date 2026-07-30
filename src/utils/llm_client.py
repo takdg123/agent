@@ -23,8 +23,10 @@ DEFAULT_URL = "http://127.0.0.1:11434"
 class LLMClient:
     """Single reusable LLM client for all agents - supports multiple models"""
 
+    # Generous by default: a cold 20-42 GB model load happens inside the first
+    # request, and 180s was not enough for a 32B model loading from disk.
     def __init__(self, base_url: str = None, model: str = "qwen2.5:32b",
-                 timeout: int = 180):
+                 timeout: int = 420):
         self.base_url = (base_url or os.getenv("OLLAMA_URL", DEFAULT_URL)).rstrip("/")
         self.model = model
         self.timeout = timeout

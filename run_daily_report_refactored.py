@@ -218,21 +218,23 @@ def main():
         validation['quality_score']
     )
     
-    # 8. Store in memory
-    harness.memory.store_report(
-        str(Path(config.data_dir) / f"reports/expert_report_{datetime.now().strftime('%Y%m%d')}.html"),
-        papers,
-        metadata={'quality_score': validation['quality_score'], 'expert_count': 6}
+    # 8. Update the running topic notes from today's papers
+    print("\n🧠 Updating topic notes...")
+    topics = harness.memory.update_topic_notes(
+        successful, model=config.general_model
     )
-    
+    print(f"   ✅ updated {len(topics)} topic notes: {', '.join(topics) or '(none)'}")
+
     # 9. Stats
     print("\n" + "="*70)
     print("📊 STATISTICS")
     print("="*70)
     stats = harness.get_stats()
+    memory = stats['memory']
     print(f"Agents: {stats['coordinator']['registered_agents']}")
     print(f"Tasks: {stats['coordinator']['completed_tasks']}")
-    print(f"Memory Papers: {stats['memory']['total_papers']}")
+    print(f"Knowledge: {memory['total_papers']} papers "
+          f"({memory['embedded_papers']} embedded), {memory['topics']} topics")
     print(f"Quality: {validation['quality_score']}/100")
     print("="*70)
     

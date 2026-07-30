@@ -1,0 +1,20 @@
+Extract the quantitative results a researcher would want to see at a glance.
+
+Paper: {title}
+Paper contents:
+{contents}
+
+Pull out 2 to 5 concrete measured or derived values. Prefer, in order:
+observed quantities with units, derived physical parameters, model constraints
+and limits, sample sizes.
+
+Rules:
+- Each entry must be a value that appears in the contents above. Do not invent,
+  round differently, or infer values.
+- Include the unit and the quantity name, e.g. "ejecta mass 0.05 Msun",
+  "jet opening angle 6.3 deg", "118 GRBs with z < 10".
+- Keep each entry under 60 characters.
+- If the paper is purely theoretical or reports no numbers, return an empty list.
+
+Respond with JSON only:
+{{"key_numbers": ["<entry>", "<entry>"]}}

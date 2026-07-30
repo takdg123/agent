@@ -2,8 +2,10 @@
 Routines package for TORRI System
 """
 
-from .downloader import DownloadRoutine
-from .ingester import IngestRoutine  
-from .reporter import ReportRoutine
+# Only import modules actually used in refactored code
+from .rss_fetcher import RSSFetcher
 
-__all__ = ['DownloadRoutine', 'IngestRoutine', 'ReportRoutine']
+# IngestRoutine and downloader are not used in refactored version
+# (kept in file for backward compatibility if needed)
+
+__all__ = ['RSSFetcher']

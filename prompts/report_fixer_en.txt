@@ -1,0 +1,20 @@
+[Attempt {attempt_num}] Analyze this astrophysics paper COMPREHENSIVELY:
+
+Title: {title}
+Authors: {authors}
+Abstract: {abstract}
+
+IMPORTANT: Provide a COMPLETE, PROFESSIONAL analysis with:
+
+1. **Main Contribution**: Clearly state the key scientific contribution (3-4 sentences)
+2. **Key Results**: List the main observational or theoretical findings with specific details
+3. **Significance**: Explain importance for GRB/kilonova/multi-messenger astronomy (2-3 sentences)
+4. **Methodology**: Describe observational or computational methods used
+
+Requirements:
+- Minimum 200 words
+- Use proper scientific terminology
+- Focus on astrophysical significance
+- Be specific about results
+
+Write in clear, professional English.

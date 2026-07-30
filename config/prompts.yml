@@ -2,19 +2,59 @@
 # Maps prompt names to their file paths and settings
 
 prompts:
-  paper_summary:
-    file: "paper_summary.txt"
-    description: "Template for generating individual paper summaries"
+  grb_expert:
+    file: "grb_expert.txt"
+    description: "GRB expert analysis prompt (uses AstroSage model)"
+    enabled: true
+    model: "astrosage:70b-q4_K_M"
+    
+  kilonova_expert:
+    file: "kilonova_expert.txt"
+    description: "Kilonova expert analysis prompt (uses AstroSage model)"
+    enabled: true
+    model: "astrosage:70b-q4_K_M"
+    
+  astrophysicist_synthesis:
+    file: "astrophysicist_synthesis.txt"
+    description: "Astrophysicist synthesis prompt (uses Qwen 32B)"
+    enabled: true
+    model: "qwen2.5:32b"
+    
+  language_expert:
+    file: "language_expert.txt"
+    description: "Bilingual Korean-English translation prompt (uses Qwen 32B)"
+    enabled: true
+    model: "qwen2.5:32b"
+    
+  critic:
+    file: "critic.txt"
+    description: "Critical review and quality assessment prompt (uses Qwen 32B)"
+    enabled: true
+    model: "qwen2.5:32b"
+    
+  writer:
+    file: "writer.txt"
+    description: "Professional science writing polish prompt (uses Qwen 32B)"
+    enabled: true
+    model: "qwen2.5:32b"
+    
+  report_fixer_en:
+    file: "report_fixer_en.txt"
+    description: "Report fixer English analysis prompt"
     enabled: true
     
-  # Add more prompts here as needed
-  # example_prompt:
-  #   file: "example.txt"
-  #   description: "Description of this prompt"
-  #   enabled: false
+  report_fixer_ko:
+    file: "report_fixer_ko.txt"
+    description: "Report fixer Korean summary prompt"
+    enabled: true
+    
+  report_validator:
+    file: "report_validator.txt"
+    description: "Report quality validation prompt"
+    enabled: true
 
 # Global prompt settings
 settings:
   default_encoding: "utf-8"
   fallback_to_default: true
-  cache_prompts: false
+  cache_prompts: true

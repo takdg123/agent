@@ -40,10 +40,11 @@ class IngestRoutine:
                     title = entry.find(".//{http://www.w3.org/2005/Atom}title")
                     title_text = title.text.strip() if title is not None and title.text else "No Title"
                     
-                    # Check if paper matches keywords
-                    title_lower = title_text.lower()
-                    if not any(keyword.lower() in title_lower for keyword in keywords):
-                        continue
+                    # Check if paper matches keywords (skip if empty keyword list)
+                    if keywords and keywords[0]:  # Only filter if keywords are provided
+                        title_lower = title_text.lower()
+                        if not any(keyword.lower() in title_lower for keyword in keywords):
+                            continue
                     
                     # Extract other metadata
                     summary = entry.find(".//{http://www.w3.org/2005/Atom}summary")

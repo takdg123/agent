@@ -10,7 +10,7 @@ import time
 from typing import Dict, Any
 from pathlib import Path
 from .base import BaseAgent, AgentTask, AgentResult, AgentCapability
-from ..utils.llm_client import LLMClient
+from ..utils.llm_client import LLMClient, LLMError
 from ..utils.paper_filter import PaperFilter
 from ..utils.prompt_loader import PromptLoader
 from ..utils.paper_text import as_prompt_context
@@ -91,9 +91,12 @@ class GRBExpertAgent(BaseExpertAgent):
         super().__init__(agent_id, config, llm_manager, "Gamma-Ray Bursts (GRBs)", model=astro_model)
     
     def can_handle(self, task: AgentTask) -> bool:
-        return (set(task.required_capabilities).issubset(set(self.capabilities)) and 
-                task.task_type in ["analyze_paper", "expert_review"])
-    
+        # Task types must be distinct per expert: the coordinator picks the first
+        # matching agent, so a shared "expert_review" type routed the kilonova
+        # review to this agent and the kilonova expert never ran.
+        return (set(task.required_capabilities).issubset(set(self.capabilities)) and
+                task.task_type == "grb_review")
+
     def execute(self, task: AgentTask) -> AgentResult:
         start_time = time.time()
         task.start()
@@ -150,9 +153,9 @@ class KilonovaExpertAgent(BaseExpertAgent):
         super().__init__(agent_id, config, llm_manager, "Kilonovae & Neutron Star Mergers", model=astro_model)
     
     def can_handle(self, task: AgentTask) -> bool:
-        return (set(task.required_capabilities).issubset(set(self.capabilities)) and 
-                task.task_type in ["analyze_paper", "expert_review"])
-    
+        return (set(task.required_capabilities).issubset(set(self.capabilities)) and
+                task.task_type == "kilonova_review")
+
     def execute(self, task: AgentTask) -> AgentResult:
         start_time = time.time()
         task.start()
@@ -273,26 +276,104 @@ class LanguageExpertAgent(BaseExpertAgent):
         super().__init__(agent_id, config, llm_manager, "Bilingual Scientific Communication", model=lang_model)
         self.capabilities.append(AgentCapability.SUMMARIZATION)
     
+    # Qwen is a Chinese-developed model and drifts into Chinese on a long English
+    # source with English instructions - an early run returned an entire analysis
+    # in Chinese, including Chinese commentary about the translation. The prompt is
+    # anchored in Korean, and output is script-checked here as a backstop.
+    HANGUL = re.compile(r"[가-힣]")
+    HAN = re.compile(r"[一-鿿]")
+    MIN_HANGUL = 20
+    MAX_HAN = 2
+
     def can_handle(self, task: AgentTask) -> bool:
-        return (set(task.required_capabilities).issubset(set(self.capabilities)) and 
+        return (set(task.required_capabilities).issubset(set(self.capabilities)) and
                 task.task_type in ["translate", "korean_summary"])
-    
+
+    @classmethod
+    def script_problem(cls, text: str, min_hangul: int = None) -> str:
+        """Return a description of any script contamination, or '' if clean."""
+        if not text or not text.strip():
+            return "empty translation"
+        han = len(cls.HAN.findall(text))
+        if han > cls.MAX_HAN:
+            return f"contains {han} Chinese characters"
+        hangul = len(cls.HANGUL.findall(text))
+        floor = cls.MIN_HANGUL if min_hangul is None else min_hangul
+        if hangul < floor:
+            return f"only {hangul} Hangul characters"
+        return ""
+
+    # A short source drifts far less than a long one, and translating one
+    # paragraph per call makes paragraph parity structural rather than a request.
+    MIN_HANGUL_PARAGRAPH = 5
+    REINFORCEMENT = ("\n\n경고: 이전 시도는 한자를 포함했습니다. "
+                     "반드시 한글만 사용하십시오. 한자를 절대 쓰지 마십시오.\n")
+
+    def _translate_paragraph(self, build_prompt, paragraph: str, attempts: int = 3) -> str:
+        prompt = build_prompt(paragraph)
+        problem = ""
+        for attempt in range(attempts):
+            try:
+                text = self._query_llm(prompt if attempt == 0 else prompt + self.REINFORCEMENT)
+            except LLMError as exc:
+                # A cold model load can time out; that is worth one more try.
+                problem = str(exc)
+                print(f"      ⚠️  paragraph attempt {attempt + 1} errored: {problem}")
+                continue
+            problem = self.script_problem(text, min_hangul=self.MIN_HANGUL_PARAGRAPH)
+            if not problem:
+                return text.strip()
+            print(f"      ⚠️  paragraph attempt {attempt + 1} rejected: {problem}")
+        raise ValueError(f"paragraph not Korean after {attempts} attempts: {problem}")
+
+    def translate(self, build_prompt, english: str) -> str:
+        """
+        Translate English into Korean, one paragraph at a time.
+
+        Raises:
+            ValueError: if no paragraph could be translated
+        """
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", english or "") if p.strip()]
+        if not paragraphs:
+            raise ValueError("no English text to translate")
+
+        rendered, failures = [], 0
+        for index, paragraph in enumerate(paragraphs, 1):
+            try:
+                rendered.append(self._translate_paragraph(build_prompt, paragraph))
+            # LLMError included: one slow or failed call must not discard the
+            # paragraphs that did translate.
+            except (ValueError, LLMError) as exc:
+                # Keep the paragraph slot so the two languages stay aligned, and
+                # make the gap visible rather than quietly dropping content.
+                print(f"      ❌ paragraph {index}/{len(paragraphs)} failed: {exc}")
+                rendered.append("[번역 실패]")
+                failures += 1
+
+        if failures == len(paragraphs):
+            raise ValueError(f"every paragraph failed to translate ({failures})")
+        if failures:
+            print(f"      ⚠️  {failures}/{len(paragraphs)} paragraphs untranslated")
+        return "\n\n".join(rendered)
+
     def execute(self, task: AgentTask) -> AgentResult:
         start_time = time.time()
         task.start()
-        
+
         try:
             paper = task.input_data.get("paper", {})
             english_analysis = task.input_data.get("english_analysis", "")
             
-            prompt = self.prompt_loader.get_language_expert_prompt(
-                title=paper.get('title', 'Unknown'),
-                abstract=paper.get('abstract', 'No abstract')[:1000],
-                english_analysis=english_analysis[:1500]
+            # No abstract, and no truncation: the Korean must be a faithful
+            # translation of the *whole* final English, not a fresh summary.
+            title = paper.get('title', 'Unknown')
+            result = self.translate(
+                lambda paragraph: self.prompt_loader.get_language_expert_prompt(
+                    title=title, english_analysis=paragraph
+                ),
+                english_analysis,
             )
 
-            result = self._query_llm(prompt)
-            
             task.complete()
             self._record_task_result(True)
             
@@ -339,13 +420,11 @@ class CriticAgent(BaseExpertAgent):
         try:
             paper = task.input_data.get("paper", {})
             analysis = task.input_data.get("analysis", "")
-            korean_summary = task.input_data.get("korean_summary", "")
-            
+
             prompt = self.prompt_loader.get_critic_prompt(
                 title=paper.get('title', 'Unknown'),
-                abstract=paper.get('abstract', 'No abstract')[:800],
-                analysis=analysis[:2000],
-                korean_summary=korean_summary
+                contents=self._paper_content(paper, limit=4000),
+                analysis=analysis[:4000]
             )
 
             result = self._query_llm(prompt)
@@ -403,14 +482,12 @@ class WriterAgent(BaseExpertAgent):
         try:
             paper = task.input_data.get("paper", {})
             analysis = task.input_data.get("analysis", "")
-            korean_summary = task.input_data.get("korean_summary", "")
             critique = task.input_data.get("critique", "")
-            
+
             prompt = self.prompt_loader.get_writer_prompt(
                 title=paper.get('title', 'Unknown'),
                 analysis=analysis,
-                korean_summary=korean_summary,
-                critique=critique[:500]
+                critique=critique[:800]
             )
 
             result = self._query_llm(prompt)

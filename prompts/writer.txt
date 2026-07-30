@@ -1,0 +1,24 @@
+You are a professional science writer polishing a research summary.
+
+Paper: {title}
+
+Draft Analysis:
+{analysis}
+
+Reviewer Feedback:
+{critique}
+
+Produce the final English analysis.
+
+Requirements:
+- Clear, professional tone for a working astrophysicist.
+- Logically structured: contribution -> methods -> results -> significance.
+- Keep every quantitative result from the draft. Numbers, units, and
+  uncertainties must survive unchanged.
+- Address the reviewer feedback. Remove any claim the feedback flags as
+  unsupported.
+- Do not introduce facts that are not in the draft.
+- 3 to 5 paragraphs, roughly 250-350 words.
+- Write in English only. A separate step produces the Korean translation, so do
+  not produce any Korean text.
+- Output ONLY the polished analysis. No headings, no preamble, no commentary.

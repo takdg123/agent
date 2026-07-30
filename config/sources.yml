@@ -13,7 +13,7 @@ feeds:
   - url: "https://export.arxiv.org/api/query?search_query=all:%22gamma-ray%20burst%22+AND+cat:astro-ph.HE&start=0&max_results=50&sortBy=submittedDate&sortOrder=descending"
 
 # Focused keywords for kilonovae and GRB research
-keywords: ["kilonova", "kilonovae", "AT2017gfo", "GRB", "gamma-ray burst", "GRBs", "gamma-ray bursts"]
+keywords: ["kilonova", "kilonovae", "AT2017gfo", "gamma-ray burst", "gamma-ray bursts", "GRB", "GRBs"]
 
 lang: "en"
 

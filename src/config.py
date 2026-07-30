@@ -32,22 +32,51 @@ class Config:
         self.qdrant_port = int(os.getenv("QDRANT_PORT", "6333"))
         self.collection_name = os.getenv("QDRANT_COLLECTION", "daily_knowledge")
         
-        # Ollama configuration
+        # Ollama configuration (primary LLM provider)
         self.ollama_url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+        self.ollama_enabled = os.getenv("OLLAMA_ENABLED", "true").lower() == "true"
+        
+        # OpenAI-compatible API configuration (alternative LLM provider)
+        self.openai_compatible_enabled = os.getenv("OPENAI_COMPATIBLE_ENABLED", "false").lower() == "true"
+        self.openai_compatible_url = os.getenv("OPENAI_COMPATIBLE_URL", "http://localhost:8000/v1")
+        self.openai_compatible_api_key = os.getenv("OPENAI_COMPATIBLE_API_KEY", "EMPTY")
+        self.openai_compatible_model = os.getenv("OPENAI_COMPATIBLE_MODEL", "Qwen2.5-VL-7B-Instruct")
+        
+        # Model configuration for different experts
+        # Default: Larger Qwen model for general use (A6000 optimized)
+        self.ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:32b")
+        
+        # Specialized models for domain experts
+        self.astro_expert_model = os.getenv("ASTRO_EXPERT_MODEL", "astrosage:70b-q4_K_M")  # AstroSage for astronomy
+        self.general_model = os.getenv("GENERAL_MODEL", "qwen2.5:32b")  # Larger Qwen for synthesis/writing
+        self.language_model = os.getenv("LANGUAGE_MODEL", "qwen2.5:32b")  # Qwen for bilingual tasks
         
         # GPU configuration for Ollama
         self.gpu_device = os.getenv("GPU_DEVICE", "0")
         
         # LLM model preferences
         self.preferred_models = [
-            "llama4:latest",
-            "llama4:13b"
+            "qwen2.5:7b",
+            "qwen2.5:14b",
+            "llama3.1:8b"
         ]
+        
+        # LLM timeout
+        self.llm_timeout = int(os.getenv("LLM_TIMEOUT", "120"))
         
         # PDF processing configuration
         self.pdf_chunk_size = int(os.getenv("PDF_CHUNK_SIZE", "800"))
         self.pdf_overlap_size = int(os.getenv("PDF_OVERLAP_SIZE", "150"))
         self.max_pdf_content = int(os.getenv("MAX_PDF_CONTENT", "100000"))
+        
+        # Vision processing configuration
+        self.vision_enabled = os.getenv("VISION_ENABLED", "true").lower() == "true"
+        self.vision_dpi = int(os.getenv("VISION_DPI", "150"))
+        self.vision_max_pages = int(os.getenv("VISION_MAX_PAGES", "5"))
+        self.vision_image_format = os.getenv("VISION_IMAGE_FORMAT", "png")
+        
+        # Agent harness configuration
+        self.harness_enabled = os.getenv("HARNESS_ENABLED", "true").lower() == "true"
         
         # Report configuration
         self.max_papers = int(os.getenv("MAX_PAPERS", "20"))
@@ -183,10 +212,17 @@ class Config:
     def __str__(self) -> str:
         """String representation of configuration"""
         email_status = "✅ Enabled" if self.email_enabled else "❌ Disabled"
+        ollama_status = "✅ Enabled" if self.ollama_enabled else "❌ Disabled"
+        openai_status = "✅ Enabled" if self.openai_compatible_enabled else "❌ Disabled"
+        vision_status = "✅ Enabled" if self.vision_enabled else "❌ Disabled"
+        harness_status = "✅ Enabled" if self.harness_enabled else "❌ Disabled"
         env_source = getattr(self, 'env_source', 'unknown')
         return f"""{self.system_name} Configuration:
   Database: {self.qdrant_host}:{self.qdrant_port} (collection: {self.collection_name})
-  Ollama: {self.ollama_url}
+  Ollama: {ollama_status} - {self.ollama_url}
+  OpenAI-Compatible: {openai_status} - {self.openai_compatible_url}
+  Vision Processing: {vision_status}
+  Agent Harness: {harness_status}
   GPU Device: {self.gpu_device}
   Max Papers: {self.max_papers}
   PDF Chunk Size: {self.pdf_chunk_size}

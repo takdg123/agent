@@ -169,6 +169,13 @@ class HTMLReportGenerator:
                          f'<div class="lbl" style="{_S["label"]}">KEY NUMBERS</div>'
                          f'<ul class="nums">{items}</ul></div>')
 
+        # Say so when the PDF could not be read: the analysis is shallower and the
+        # reader should weigh it accordingly.
+        if analysis.get("text_source") == "abstract":
+            parts.append(f'<div class="meta" style="{_S["meta"]}">'
+                         f"<em>Analysed from the abstract only &mdash; "
+                         f"full text unavailable.</em></div>")
+
         for label, text in (
             ("Abstract", paper.get("abstract")),
             ("Analysis (English)", analysis.get("english")),
@@ -225,7 +232,9 @@ class HTMLReportGenerator:
             for i, entry in enumerate(papers_analysis, 1)
         )
         if not cards:
-            cards = (f'<div class="card" style="{_S["card"]}">'
+            # Deliberately not class="card": the validator counts cards as papers,
+            # and an empty digest must not look like a one-paper digest.
+            cards = (f'<div class="empty" style="{_S["card"]}">'
                      f'<div class="prose" style="{_S["prose"]}">'
                      f"<p>No relevant papers today.</p></div></div>")
 

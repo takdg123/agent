@@ -165,6 +165,14 @@ class TestCardStructure(unittest.TestCase):
     def test_arxiv_link_present(self):
         self.assertIn("arxiv.org/abs/2607.25261", render())
 
+    def test_abstract_only_analysis_is_flagged(self):
+        html = render({**ANALYSIS, "text_source": "abstract"})
+        self.assertIn("abstract only", html)
+
+    def test_full_text_analysis_carries_no_warning(self):
+        html = render({**ANALYSIS, "text_source": "pdf"})
+        self.assertNotIn("abstract only", html)
+
     def test_korean_missing_is_flagged_not_silent(self):
         html = render({**ANALYSIS, "korean": ""})
         self.assertIn("Conclusions follow", html)
