@@ -38,9 +38,11 @@ class BaseExpertAgent(BaseAgent):
         self.prompt_loader = PromptLoader(prompt_dir)
         print(f"   💡 {expertise} using model: {self.model}")
     
-    def _query_llm(self, prompt: str, format: str = None) -> str:
+    def _query_llm(self, prompt: str, format: str = None,
+                   options: dict = None) -> str:
         """Shared LLM query method - uses agent's designated model"""
-        return self.llm_client.generate(prompt, model=self.model, format=format)
+        return self.llm_client.generate(prompt, model=self.model, format=format,
+                                        options=options)
     
     def _assess_relevance(self, paper: Dict, keywords: list) -> float:
         """Shared relevance assessment"""
@@ -308,23 +310,63 @@ class LanguageExpertAgent(BaseExpertAgent):
     MIN_HANGUL_PARAGRAPH = 5
     REINFORCEMENT = ("\n\n경고: 이전 시도는 한자를 포함했습니다. "
                      "반드시 한글만 사용하십시오. 한자를 절대 쓰지 마십시오.\n")
+    # Ollama defaults to temperature 0.8. Translation needs fidelity, not
+    # invention, and loose sampling is a direct cause of drifting into Chinese.
+    TRANSLATION_OPTIONS = {"top_p": 0.9, "repeat_penalty": 1.05}
+    TEMPERATURE_LADDER = (0.2, 0.1, 0.05)
 
-    def _translate_paragraph(self, build_prompt, paragraph: str, attempts: int = 3) -> str:
-        prompt = build_prompt(paragraph)
+    def _attempt(self, prompt: str, temperature: float):
+        """One translation attempt. Returns (text, problem); text is None on error."""
+        options = {**self.TRANSLATION_OPTIONS, "temperature": temperature}
+        try:
+            text = self._query_llm(prompt, options=options)
+        except LLMError as exc:
+            return None, str(exc)
+        return text, self.script_problem(text, min_hangul=self.MIN_HANGUL_PARAGRAPH)
+
+    def _translate_paragraph(self, build_prompt, paragraph: str) -> str:
+        """
+        Translate one paragraph, tightening sampling on each retry.
+
+        Observed failure: Qwen drifts into Chinese mid-output, and one retry
+        returned 3986 Chinese characters. Lower temperature reduces the drift, and
+        a shorter source reduces it further, so the last resort is sentence by
+        sentence.
+        """
+        base_prompt = build_prompt(paragraph)
         problem = ""
-        for attempt in range(attempts):
-            try:
-                text = self._query_llm(prompt if attempt == 0 else prompt + self.REINFORCEMENT)
-            except LLMError as exc:
-                # A cold model load can time out; that is worth one more try.
-                problem = str(exc)
-                print(f"      ⚠️  paragraph attempt {attempt + 1} errored: {problem}")
-                continue
-            problem = self.script_problem(text, min_hangul=self.MIN_HANGUL_PARAGRAPH)
-            if not problem:
+        for attempt, temperature in enumerate(self.TEMPERATURE_LADDER):
+            prompt = base_prompt if attempt == 0 else base_prompt + self.REINFORCEMENT
+            text, problem = self._attempt(prompt, temperature)
+            if text is not None and not problem:
                 return text.strip()
-            print(f"      ⚠️  paragraph attempt {attempt + 1} rejected: {problem}")
-        raise ValueError(f"paragraph not Korean after {attempts} attempts: {problem}")
+            print(f"      ⚠️  paragraph attempt {attempt + 1} "
+                  f"(temp {temperature}) rejected: {problem}")
+
+        return self._translate_sentences(build_prompt, paragraph)
+
+    def _translate_sentences(self, build_prompt, paragraph: str) -> str:
+        """Last resort: a sentence at a time, where drift is far less likely."""
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", paragraph) if s.strip()]
+        if len(sentences) < 2:
+            raise ValueError("paragraph not Korean and too short to split further")
+
+        print(f"      ↪️  falling back to sentence-by-sentence ({len(sentences)} sentences)")
+        rendered = []
+        for sentence in sentences:
+            text, problem = self._attempt(build_prompt(sentence),
+                                          self.TEMPERATURE_LADDER[-1])
+            if text is not None and not problem:
+                rendered.append(text.strip())
+
+        # Require most of the paragraph to have survived; a couple of dropped
+        # sentences is a gap, half a paragraph is a wrong translation.
+        if len(rendered) < max(1, len(sentences) // 2):
+            raise ValueError(
+                f"only {len(rendered)}/{len(sentences)} sentences translated")
+        if len(rendered) < len(sentences):
+            print(f"      ⚠️  {len(sentences) - len(rendered)} sentences dropped")
+        return " ".join(rendered)
 
     def translate(self, build_prompt, english: str) -> str:
         """

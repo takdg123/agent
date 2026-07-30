@@ -66,6 +66,10 @@ class KnowledgeStore:
                 continue  # one bad line must not lose the whole store
         return records
 
+    def known_ids(self) -> set:
+        """arXiv IDs already analysed, so they are not paid for twice."""
+        return {r.get("arxiv_id") for r in self._load_papers() if r.get("arxiv_id")}
+
     def _embed(self, text: str):
         if not self.llm or not text.strip():
             return None

@@ -28,11 +28,11 @@ class StubLLM:
     def __init__(self):
         self.generate_calls = 0
 
-    def embed(self, text, model=None, timeout=None):
+    def embed(self, text, model=None, timeout=None, **kwargs):
         low = text.lower()
         return [1.0 if axis in low else 0.0 for axis in self.AXES] or [0.0]
 
-    def generate(self, prompt, model=None, format=None, timeout=None):
+    def generate(self, prompt, model=None, format=None, timeout=None, **kwargs):
         self.generate_calls += 1
         return "Condensed note about the field."
 

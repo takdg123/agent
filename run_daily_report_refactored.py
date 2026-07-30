@@ -16,14 +16,18 @@ from src.report_validator import ReportValidator
 from src.utils.llm_client import LLMClient, LLMError
 from src.utils.relevance import RelevanceScorer, load_profile
 from src.utils import paper_text
+from src.utils.parallel import map_bounded
 from src.utils.html_report_generator import HTMLReportGenerator
 from datetime import datetime
 from pathlib import Path
 import yagmail
 
+# arXiv is a shared service; keep the pool small.
+PDF_WORKERS = 4
+
 
 def fetch_and_filter_papers(llm: LLMClient, config: Config,
-                            categories: list = None) -> list:
+                            categories: list = None, known_ids: set = None) -> list:
     """
     Fetch papers and keep the ones relevant to the reader's interest profile.
 
@@ -52,6 +56,14 @@ def fetch_and_filter_papers(llm: LLMClient, config: Config,
     if not all_papers:
         return []
 
+    seen = known_ids or set()
+    fresh = [p for p in all_papers if p.get("arxiv_id") not in seen]
+    if len(fresh) != len(all_papers):
+        print(f"   ⏭️  {len(all_papers) - len(fresh)} already analysed, skipping")
+    all_papers = fresh
+    if not all_papers:
+        return []
+
     print(f"\n🎯 Scoring {len(all_papers)} papers against your interest profile...")
     profile = load_profile(Path(config.root_dir) / "config" / "interests.yml")
     scorer = RelevanceScorer(
@@ -72,8 +84,19 @@ def attach_full_text(papers: list, config: Config) -> list:
     than removing it.
     """
     print(f"\n📖 Extracting full text for {len(papers)} papers...")
-    for paper in papers:
-        contents = paper_text.extract(paper, cache_dir=Path(config.data_dir) / "pdfs")
+    cache_dir = Path(config.data_dir) / "pdfs"
+
+    # Downloads are network-bound and independent; a small pool keeps arXiv happy.
+    outcomes = map_bounded(
+        lambda paper: paper_text.extract(paper, cache_dir=cache_dir),
+        papers, workers=PDF_WORKERS, label="pdf",
+    )
+
+    for paper, contents in outcomes:
+        if isinstance(contents, Exception):
+            print(f"   ⚠️  {paper.get('title', '')[:52]}  [extraction failed: {contents}]")
+            contents = {"abstract": paper.get("abstract", ""), "source": "abstract",
+                        "introduction": "", "methods": "", "results": "", "conclusions": ""}
         paper["contents"] = contents
         sections = [name for name in ("introduction", "methods", "results", "conclusions")
                     if contents.get(name)]
@@ -170,7 +193,8 @@ def main():
         return 1
     
     # 3. Fetch and score papers against the interest profile
-    papers = fetch_and_filter_papers(llm, config)
+    papers = fetch_and_filter_papers(llm, config,
+                                    known_ids=harness.memory.known_ids())
     if not papers:
         print("❌ No relevant papers found")
         return 0

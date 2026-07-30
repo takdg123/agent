@@ -23,10 +23,16 @@ from typing import Dict, List, Optional
 import yaml
 
 from .embeddings import CachedProfileEmbedding, cosine, paper_text_for_embedding
+from .parallel import map_bounded
 from .prompt_loader import PromptLoader
 
 DEFAULT_THRESHOLD = 6.0
 DEFAULT_MAX_TRIAGE = 15
+
+# Embeddings are small and fast, so more of them can be in flight. Triage runs on
+# a 32B model, which degrades if flooded.
+EMBED_WORKERS = 8
+TRIAGE_WORKERS = 3
 
 
 def load_profile(path: Path) -> Dict:
@@ -96,14 +102,20 @@ class RelevanceScorer:
             print("   ⚠️  ranking without embeddings; triaging in feed order")
             return papers[:limit]
 
+        # Embedding is cheap per call but there are ~40 of them; sequential
+        # round-trips dominated the stage.
+        outcomes = map_bounded(
+            lambda paper: self.llm.embed(paper_text_for_embedding(paper)),
+            papers, workers=EMBED_WORKERS, label="embed",
+        )
+
         scored = []
-        for paper in papers:
-            try:
-                vector = self.llm.embed(paper_text_for_embedding(paper))
-                similarity = cosine(profile_vector, vector)
-            except Exception as exc:
-                print(f"   ⚠️  could not embed '{paper.get('title', '')[:40]}' ({exc})")
+        for paper, outcome in outcomes:
+            if isinstance(outcome, Exception):
+                print(f"   ⚠️  could not embed '{paper.get('title', '')[:40]}' ({outcome})")
                 similarity = 0.0
+            else:
+                similarity = cosine(profile_vector, outcome)
             paper["profile_similarity"] = round(similarity, 4)
             scored.append(paper)
 
@@ -131,7 +143,8 @@ class RelevanceScorer:
 
         unscored = {"score": None, "topic_tags": [], "why_it_matters": ""}
         try:
-            raw = self.llm.generate(prompt, model=self.model, format="json")
+            raw = self.llm.generate(prompt, model=self.model, format="json",
+                                    options={"temperature": 0.1})
         except Exception as exc:
             print(f"   ⚠️  triage failed for '{paper.get('title', '')[:40]}' ({exc})")
             return {**unscored, "why_it_matters": "relevance could not be assessed"}
@@ -164,9 +177,15 @@ class RelevanceScorer:
         print(f"   🎯 triaging {len(candidates)} of {len(papers)} papers "
               f"(threshold {threshold})")
 
+        outcomes = map_bounded(self.triage, candidates,
+                               workers=TRIAGE_WORKERS, label="triage")
+
         kept, rejected = [], []
-        for paper in candidates:
-            verdict = self.triage(paper)
+        for paper, verdict in outcomes:
+            if isinstance(verdict, Exception):
+                print(f"   ⚠️  triage error for '{paper.get('title', '')[:40]}' ({verdict})")
+                verdict = {"score": None, "topic_tags": [],
+                           "why_it_matters": "relevance could not be assessed"}
             paper["relevance_score"] = verdict["score"]
             paper["topic_tags"] = verdict["topic_tags"]
             paper["why_it_matters"] = verdict["why_it_matters"]

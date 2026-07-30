@@ -32,9 +32,15 @@ class LLMClient:
         self.timeout = timeout
 
     def generate(self, prompt: str, model: Optional[str] = None,
-                 format: Optional[str] = None, timeout: Optional[int] = None) -> str:
+                 format: Optional[str] = None, timeout: Optional[int] = None,
+                 options: Optional[dict] = None) -> str:
         """
         Generate a response from the LLM.
+
+        Args:
+            options: Ollama sampling options, e.g. {"temperature": 0.2}. Ollama
+                defaults to 0.8, which is far too loose for translation and
+                structured extraction - it is a direct cause of script drift.
 
         Returns:
             Generated text (never empty)
@@ -46,6 +52,8 @@ class LLMClient:
         payload = {"model": target, "prompt": prompt, "stream": False}
         if format:
             payload["format"] = format
+        if options:
+            payload["options"] = options
 
         try:
             response = requests.post(

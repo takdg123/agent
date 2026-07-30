@@ -30,7 +30,7 @@ class Responder:
         self.payload = payload
         self.prompt = None
 
-    def generate(self, prompt, model=None, format=None, timeout=None):
+    def generate(self, prompt, model=None, format=None, timeout=None, **kwargs):
         self.prompt = prompt
         return self.payload
 

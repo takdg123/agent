@@ -49,8 +49,10 @@ def capture_prompt(agent, task):
     captured = {}
 
     def fake_generate(prompt, *args, **kwargs):
-        captured["prompt"] = prompt
-        return "결과"
+        captured.setdefault("prompt", prompt)
+        # Must pass the Korean script check, or the translator retries and the
+        # captured prompt would be a retry rather than the first call.
+        return "이것은 한국어 번역입니다. 감마선 폭발과 킬로노바를 다룹니다."
 
     with patch.object(type(agent.llm_client), "generate", side_effect=fake_generate):
         agent.execute(task)
@@ -338,6 +340,78 @@ class TestExpertRouting(unittest.TestCase):
         source = Path("src/harness/expert_harness.py").read_text()
         self.assertIn('task_type="grb_review"', source)
         self.assertIn('task_type="kilonova_review"', source)
+
+
+class TestTranslationEscalation(unittest.TestCase):
+    """
+    Qwen drifts into Chinese stochastically; one observed retry returned 3986
+    Chinese characters. Retries tighten sampling, then fall back to sentences.
+    """
+
+    def test_temperature_tightens_on_each_retry(self):
+        agent = build(LanguageExpertAgent)
+        temps = []
+        good = "이것은 한국어 문단입니다. 감마선 폭발."
+
+        def fake(prompt, *a, **k):
+            temps.append(k.get("options", {}).get("temperature"))
+            return "这是中文" * 30 if len(temps) < 3 else good
+
+        with patch.object(type(agent.llm_client), "generate", side_effect=fake):
+            agent.translate(lambda p: p, "One paragraph.")
+        self.assertEqual(temps, [0.2, 0.1, 0.05])
+
+    def test_never_uses_ollama_default_temperature(self):
+        """Default 0.8 is far too loose for translation."""
+        agent = build(LanguageExpertAgent)
+        seen = {}
+
+        def fake(prompt, *a, **k):
+            seen.update(k.get("options", {}))
+            return "이것은 한국어 문단입니다. 감마선 폭발."
+
+        with patch.object(type(agent.llm_client), "generate", side_effect=fake):
+            agent.translate(lambda p: p, "One paragraph.")
+        self.assertLessEqual(seen["temperature"], 0.2)
+
+    def test_sentence_fallback_after_ladder_exhausted(self):
+        agent = build(LanguageExpertAgent)
+        calls = {"n": 0}
+        good = "이것은 한국어 문장입니다."
+
+        def fake(prompt, *a, **k):
+            calls["n"] += 1
+            # The three whole-paragraph attempts fail; sentences then succeed.
+            return "这是中文" * 30 if calls["n"] <= 3 else good
+
+        with patch.object(type(agent.llm_client), "generate", side_effect=fake):
+            korean = agent.translate(lambda p: p, "First sentence. Second sentence.")
+        self.assertEqual(korean, f"{good} {good}")
+        self.assertEqual(calls["n"], 5)  # 3 paragraph attempts + 2 sentences
+
+    def test_unsplittable_paragraph_fails_rather_than_publishing_chinese(self):
+        agent = build(LanguageExpertAgent)
+        with patch.object(type(agent.llm_client), "generate",
+                          side_effect=lambda *a, **k: "这是中文" * 30):
+            result = agent.execute(AgentTask(
+                task_type="korean_summary",
+                input_data={"paper": PAPER, "english_analysis": "Only one sentence."},
+                required_capabilities=[AgentCapability.SUMMARIZATION],
+            ))
+        self.assertFalse(result.success)
+
+    def test_mostly_failing_sentences_rejects_the_paragraph(self):
+        agent = build(LanguageExpertAgent)
+        calls = {"n": 0}
+
+        def fake(prompt, *a, **k):
+            calls["n"] += 1
+            # Paragraph attempts fail, then only the last sentence of four works.
+            return "이것은 한국어 문장입니다." if calls["n"] == 7 else "这是中文" * 30
+
+        with patch.object(type(agent.llm_client), "generate", side_effect=fake):
+            with self.assertRaises(ValueError):
+                agent.translate(lambda p: p, "A one. B two. C three. D four.")
 
 
 if __name__ == "__main__":

@@ -56,7 +56,8 @@ def extract(llm, paper: Dict, model: str = None,
     )
 
     try:
-        raw = llm.generate(prompt, model=model, format="json")
+        raw = llm.generate(prompt, model=model, format="json",
+                           options={"temperature": 0.1})
     except Exception as exc:
         print(f"      ⚠️  key numbers unavailable ({exc})")
         return []

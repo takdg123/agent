@@ -52,7 +52,7 @@ class StubLLM:
         self.embed_calls = 0
         self.generate_calls = 0
 
-    def embed(self, text, model="nomic-embed-text", timeout=None):
+    def embed(self, text, model="nomic-embed-text", timeout=None, **kwargs):
         self.embed_calls += 1
         low = text.lower()
         return [
@@ -61,7 +61,7 @@ class StubLLM:
             1.0 if "dark matter" in low else 0.0,
         ]
 
-    def generate(self, prompt, model=None, format=None, timeout=None):
+    def generate(self, prompt, model=None, format=None, timeout=None, **kwargs):
         self.generate_calls += 1
         # Identify the paper by its title appearing in the prompt.
         for paper, arxiv_id in ((ON_TOPIC, "1"), (OFF_TOPIC, "2"), (BORDERLINE, "3")):
