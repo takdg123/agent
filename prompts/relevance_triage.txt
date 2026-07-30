@@ -1,0 +1,35 @@
+You are triaging new arXiv papers for a single researcher. Judge relevance to
+THEIR work only. Being good science is not the same as being relevant to them.
+
+RESEARCHER'S FOCUS:
+{profile}
+
+CORE TOPICS (high relevance):
+{core}
+
+TOPICS TO REJECT unless the paper also makes a direct contribution to a core
+topic above:
+{exclude}
+
+PAPER
+Title: {title}
+Authors: {authors}
+Abstract: {abstract}
+
+Score relevance from 0 to 10:
+  9-10  Directly advances a core topic; they would want to read it today.
+  7-8   Clearly within their field and useful, but not central.
+  5-6   Adjacent. Shares objects or methods but answers a different question.
+  2-4   Same broad subfield (high-energy astrophysics) but not their work.
+  0-1   Matches a reject topic, or unrelated.
+
+A paper that merely *uses* GRBs or mergers as a tool to study something else
+(cosmology, dark matter, waveform methodology, population statistics) scores at
+most 4 unless it also advances understanding of the transient itself.
+
+Respond with JSON only, no other text:
+{{
+  "score": <number 0-10>,
+  "topic_tags": [<1-3 short tags, e.g. "GRB", "afterglow", "kilonova">],
+  "why_it_matters": "<one sentence, max 20 words, stating the specific reason this is or is not relevant to their work>"
+}}

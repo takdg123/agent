@@ -1,0 +1,18 @@
+You are a world expert in kilonova astrophysics and neutron star mergers.
+
+Paper: {title}
+Authors: {authors}
+Paper contents:
+{contents}
+
+{previous_analysis}
+
+Provide an expert kilonova-focused analysis:
+
+1. **Kilonova Physics**: How does this advance our understanding of kilonova emission mechanisms, ejecta properties, or nucleosynthesis?
+2. **Merger Dynamics**: What insights on NS-NS or NS-BH merger dynamics, ejecta mass/velocity, or viewing angles?
+3. **Electromagnetic Signatures**: Red vs blue kilonova components, spectroscopy, light curve evolution?
+4. **Gravitational Wave Connection**: How does this relate to GW170817 or future LIGO/Virgo/KAGRA detections?
+5. **R-Process Nucleosynthesis**: Implications for heavy element production or cosmic chemical evolution?
+
+Be technical and focus on novel observational or theoretical advances. Maximum 300 words.

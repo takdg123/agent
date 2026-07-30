@@ -13,6 +13,7 @@ from .base import BaseAgent, AgentTask, AgentResult, AgentCapability
 from ..utils.llm_client import LLMClient
 from ..utils.paper_filter import PaperFilter
 from ..utils.prompt_loader import PromptLoader
+from ..utils.paper_text import as_prompt_context
 import re
 
 class BaseExpertAgent(BaseAgent):
@@ -46,6 +47,21 @@ class BaseExpertAgent(BaseAgent):
         text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
         matches = sum(1 for kw in keywords if kw.lower() in text)
         return min(1.0, matches / max(len(keywords) // 2, 1))
+
+    @staticmethod
+    def _paper_content(paper: Dict, limit: int = 12000) -> str:
+        """
+        The paper text an expert should reason over.
+
+        Prefers the extracted full-text sections attached by paper_text.extract;
+        falls back to the abstract so a failed PDF still yields an analysis.
+        """
+        contents = paper.get("contents")
+        if contents:
+            context = as_prompt_context(contents)
+            if context.strip():
+                return context[:limit]
+        return (paper.get("abstract") or "No abstract")[:limit]
 
     @staticmethod
     def _format_context(previous_analysis: Any) -> str:
@@ -89,7 +105,7 @@ class GRBExpertAgent(BaseExpertAgent):
             prompt = self.prompt_loader.get_grb_expert_prompt(
                 title=paper.get('title', 'Unknown'),
                 authors=', '.join(paper.get('authors', [])[:5]),
-                abstract=paper.get('abstract', 'No abstract')[:1500],
+                contents=self._paper_content(paper),
                 previous_analysis=self._format_context(previous_analysis)
             )
 
@@ -148,7 +164,7 @@ class KilonovaExpertAgent(BaseExpertAgent):
             prompt = self.prompt_loader.get_kilonova_expert_prompt(
                 title=paper.get('title', 'Unknown'),
                 authors=', '.join(paper.get('authors', [])[:5]),
-                abstract=paper.get('abstract', 'No abstract')[:1500],
+                contents=self._paper_content(paper),
                 previous_analysis=self._format_context(previous_analysis)
             )
 
@@ -208,7 +224,7 @@ class AstrophysicistAgent(BaseExpertAgent):
             prompt = self.prompt_loader.get_astrophysicist_prompt(
                 title=paper.get('title', 'Unknown'),
                 authors=', '.join(paper.get('authors', [])[:5]),
-                abstract=paper.get('abstract', 'No abstract')[:1500],
+                contents=self._paper_content(paper),
                 expert_reviews=self._format_expert_reviews(expert_reviews)
             )
 

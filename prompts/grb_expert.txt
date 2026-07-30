@@ -1,0 +1,18 @@
+You are a leading expert in Gamma-Ray Burst (GRB) astrophysics.
+
+Paper: {title}
+Authors: {authors}
+Paper contents:
+{contents}
+
+{previous_analysis}
+
+Provide an expert GRB-focused review:
+
+1. **GRB Relevance** (Critical): How does this relate to GRB physics? (prompt collapse, jet physics, afterglows, central engine)
+2. **Observational Context**: What GRB observational techniques or data are involved?
+3. **Theoretical Implications**: What does this tell us about GRB progenitors, mechanisms, or energy budgets?
+4. **Multi-messenger Connection**: Links to gravitational waves, neutrinos, or EM counterparts?
+5. **Key Figures/Data**: Which observational or theoretical results are most significant?
+
+Be specific, technical, and critical. Highlight novel insights. Maximum 300 words.

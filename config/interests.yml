@@ -1,0 +1,40 @@
+# Reader interest profile. Drives relevance scoring in src/utils/relevance.py.
+#
+# `profile` is embedded and compared against each paper, so write it as prose the
+# way you would describe your work to a colleague — phrasing matters more than
+# keywords. `core` and `exclude` are handed to the triage model as explicit
+# instructions.
+#
+# Editing `profile` invalidates the cached embedding automatically.
+
+profile: >
+  Observational and theoretical high-energy astrophysics centred on gamma-ray
+  bursts and neutron star mergers. Prompt emission mechanisms and spectral
+  evolution, central engine physics, jet structure and magnetization, jet
+  polarization, and afterglow modelling. Kilonova emission, ejecta properties,
+  and r-process nucleosynthesis. Electromagnetic counterparts to gravitational
+  wave events and the multi-messenger follow-up programme that links them.
+
+core:
+  - GRB prompt emission, spectral evolution, central engine
+  - GRB jet structure, magnetization, polarization
+  - GRB afterglows; GRB-supernova connections
+  - Kilonovae, ejecta properties, r-process nucleosynthesis
+  - NS-NS / NS-BH mergers and their EM counterparts
+  - Multi-messenger follow-up (GW + gamma-ray), TDAMM
+
+# Topics that leaked into recent reports and should be rejected unless a paper
+# also makes a direct contribution to a `core` topic.
+exclude:
+  - AGN / blazar variability and unification models
+  - BBH waveform modelling, surrogates, parameter-estimation methodology
+  - Primordial black holes, dark matter constraints
+  - Binary population synthesis / common envelope evolution
+  - Cosmology using transients as standard candles
+
+# Papers scoring below `threshold` (0-10) are dropped from the report.
+threshold: 6.0
+
+# How many top-ranked papers get an LLM triage call. Raising this costs one
+# model call per extra paper.
+max_triage: 15

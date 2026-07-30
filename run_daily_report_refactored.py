@@ -14,28 +14,33 @@ from src.routines.rss_fetcher import RSSFetcher
 from src.harness.expert_harness import ExpertHarness
 from src.report_validator import ReportValidator
 from src.utils.llm_client import LLMClient, LLMError
-from src.utils.paper_filter import PaperFilter
+from src.utils.relevance import RelevanceScorer, load_profile
+from src.utils import paper_text
 from src.utils.html_report_generator import HTMLReportGenerator
 from datetime import datetime
 from pathlib import Path
 import yagmail
 
 
-def fetch_and_filter_papers(categories: list = None) -> list:
+def fetch_and_filter_papers(llm: LLMClient, config: Config,
+                            categories: list = None) -> list:
     """
-    Fetch and filter papers in one clean function
-    
+    Fetch papers and keep the ones relevant to the reader's interest profile.
+
     Args:
+        llm: client used for embeddings and triage
+        config: configuration object
         categories: arXiv categories to fetch from
-        
+
     Returns:
-        Filtered papers sorted by relevance
+        Papers sorted by descending relevance, each carrying relevance_score,
+        topic_tags, and why_it_matters
     """
     categories = categories or ["astro-ph.HE"]
-    
+
     print("\n📥 Fetching papers from arXiv RSS feeds...")
     rss_fetcher = RSSFetcher()
-    
+
     all_papers = []
     for category in categories:
         feed_url = f"http://export.arxiv.org/rss/{category}"
@@ -43,12 +48,39 @@ def fetch_and_filter_papers(categories: list = None) -> list:
         papers = rss_fetcher.fetch_from_rss(feed_url)
         all_papers.extend(papers)
         print(f"   📄 {len(papers)} papers")
-    
-    print(f"\n🔍 Filtering {len(all_papers)} papers...")
-    filtered = PaperFilter.filter_papers(all_papers, min_score=0.5)
-    print(f"✅ {len(filtered)} relevant papers")
-    
-    return filtered
+
+    if not all_papers:
+        return []
+
+    print(f"\n🎯 Scoring {len(all_papers)} papers against your interest profile...")
+    profile = load_profile(Path(config.root_dir) / "config" / "interests.yml")
+    scorer = RelevanceScorer(
+        llm, profile,
+        cache_dir=Path(config.data_dir) / "knowledge",
+        prompt_dir=Path(config.root_dir) / "prompts",
+        model=config.general_model,
+    )
+    return scorer.select(all_papers)
+
+
+def attach_full_text(papers: list, config: Config) -> list:
+    """
+    Attach extracted PDF sections to each paper.
+
+    Runs after relevance selection so only papers that will be reported are
+    downloaded. A failed extraction degrades that paper to abstract-only rather
+    than removing it.
+    """
+    print(f"\n📖 Extracting full text for {len(papers)} papers...")
+    for paper in papers:
+        contents = paper_text.extract(paper, cache_dir=Path(config.data_dir) / "pdfs")
+        paper["contents"] = contents
+        sections = [name for name in ("introduction", "methods", "results", "conclusions")
+                    if contents.get(name)]
+        marker = "📄" if contents["source"] == "pdf" else "⚠️ "
+        print(f"   {marker} {paper.get('title', '')[:52]}"
+              f"  [{contents['source']}: {', '.join(sections) or 'abstract only'}]")
+    return papers
 
 
 def save_and_email_report(html: str, config: Config, papers_count: int, 
@@ -137,26 +169,33 @@ def main():
         print(f"\n❌ Could not initialize experts:\n{exc}")
         return 1
     
-    # 3. Fetch and filter papers
-    papers = fetch_and_filter_papers()
+    # 3. Fetch and score papers against the interest profile
+    papers = fetch_and_filter_papers(llm, config)
     if not papers:
         print("❌ No relevant papers found")
         return 0
-    
+
     # Limit for processing (can be removed)
-    papers_to_analyze = papers[:10]
-    
+    papers_to_analyze = attach_full_text(papers[:10], config)
+
     # 4. Analyze with multi-expert system
     print(f"\n🔬 Analyzing {len(papers_to_analyze)} papers with 6-expert system...")
     results = harness.batch_analyze_papers(papers_to_analyze, use_memory=True)
-    
+
     successful = [r for r in results if r.get('success', False)]
     print(f"✅ Analyzed {len(successful)}/{len(papers_to_analyze)} papers")
-    
+
     if not successful:
         print("❌ No successful analyses")
         return 1
-    
+
+    # Relevance is decided before analysis; carry it into what the report renders.
+    for entry in successful:
+        paper = entry.get('paper', {})
+        for field in ('relevance_score', 'topic_tags', 'why_it_matters'):
+            if paper.get(field) is not None:
+                entry.setdefault('analysis', {})[field] = paper[field]
+
     # 5. Generate HTML report
     print("\n📄 Generating HTML report...")
     html = HTMLReportGenerator.generate_full_report(
