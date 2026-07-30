@@ -35,6 +35,10 @@ class PromptLoader:
         """Get astrophysicist synthesis prompt"""
         return self._load("astrophysicist_synthesis.txt").format(**kwargs)
     
+    def get_revision_prompt(self, **kwargs) -> str:
+        """Get astrophysicist revision prompt"""
+        return self._load("astrophysicist_revise.txt").format(**kwargs)
+    
     def get_language_expert_prompt(self, **kwargs) -> str:
         """Get language expert prompt"""
         return self._load("language_expert.txt").format(**kwargs)

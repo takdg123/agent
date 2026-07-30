@@ -6,13 +6,19 @@ Agent Coordinator for task distribution and management
 """
 
 from typing import List, Dict, Any, Optional
-from queue import PriorityQueue
+from queue import PriorityQueue, Empty
+from concurrent.futures import ThreadPoolExecutor
 import threading
 from .base import BaseAgent, AgentTask, AgentResult, TaskStatus
 
+# Independent tasks run concurrently, but only one call per model at a time:
+# two 42GB models cannot generate simultaneously on one GPU without thrashing.
+MAX_CONCURRENT_TASKS = 4
+
+
 class AgentCoordinator:
     """Coordinates multiple agents and distributes tasks"""
-    
+
     def __init__(self, config: Any):
         self.config = config
         self.agents: Dict[str, BaseAgent] = {}
@@ -21,6 +27,9 @@ class AgentCoordinator:
         self.completed_tasks: Dict[str, AgentResult] = {}
         self.failed_tasks: Dict[str, AgentResult] = {}
         self._lock = threading.Lock()
+        # One lock per model, so different models can work in parallel while
+        # calls to the same model stay serialised.
+        self._model_locks: Dict[str, threading.Lock] = {}
     
     def register_agent(self, agent: BaseAgent):
         """Register an agent with the coordinator"""
@@ -78,12 +87,13 @@ class AgentCoordinator:
         
         # Execute task
         print(f"🔄 Executing task {task.task_id} with agent {agent.agent_id}")
-        
+
         with self._lock:
             self.active_tasks[task.task_id] = task
-        
-        result = agent.execute(task)
-        
+
+        with self._lock_for_model(agent):
+            result = agent.execute(task)
+
         with self._lock:
             if task.task_id in self.active_tasks:
                 del self.active_tasks[task.task_id]
@@ -105,16 +115,40 @@ class AgentCoordinator:
         _, task_id, task = self.task_queue.get()
         return self.execute_task(task)
     
+    def _lock_for_model(self, agent: BaseAgent) -> threading.Lock:
+        """The serialisation lock for whichever model this agent uses."""
+        model = getattr(agent, "model", "default")
+        with self._lock:
+            if model not in self._model_locks:
+                self._model_locks[model] = threading.Lock()
+            return self._model_locks[model]
+
+    def _drain_queue(self) -> List[AgentTask]:
+        """Remove every queued task, highest priority first."""
+        tasks = []
+        while True:
+            try:
+                tasks.append(self.task_queue.get_nowait()[2])
+            except Empty:
+                return tasks
+
     def execute_all_tasks(self) -> List[AgentResult]:
-        """Execute all tasks in queue"""
-        results = []
-        
-        while not self.task_queue.empty():
-            result = self.execute_next_task()
-            if result:
-                results.append(result)
-        
-        return results
+        """
+        Execute all queued tasks, concurrently where the models differ.
+
+        Previously a sequential while-loop, so two tasks on different models
+        waited on each other for no reason. Results keep submission order.
+        """
+        tasks = self._drain_queue()
+        if not tasks:
+            return []
+        if len(tasks) == 1:
+            result = self.execute_task(tasks[0])
+            return [result] if result else []
+
+        with ThreadPoolExecutor(max_workers=min(len(tasks), MAX_CONCURRENT_TASKS),
+                                thread_name_prefix="agent") as pool:
+            return [r for r in pool.map(self.execute_task, tasks) if r]
     
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a specific task"""

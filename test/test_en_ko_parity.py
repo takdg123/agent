@@ -336,10 +336,23 @@ class TestExpertRouting(unittest.TestCase):
         self.assertFalse(self.grb.can_handle(self._task("expert_review")))
         self.assertFalse(self.kn.can_handle(self._task("expert_review")))
 
-    def test_harness_submits_distinct_types(self):
-        source = Path("src/harness/expert_harness.py").read_text()
-        self.assertIn('task_type="grb_review"', source)
-        self.assertIn('task_type="kilonova_review"', source)
+    def test_harness_plans_types_each_expert_accepts(self):
+        """
+        The types the harness plans must be exactly the ones the agents handle;
+        a mismatch is how the kilonova expert silently never ran.
+        """
+        from src.harness.expert_harness import ExpertHarness
+
+        planned = ExpertHarness.expert_order(
+            {"title": "GRB and kilonova", "abstract": "", "topic_tags": []}, True, True)
+        types = [task_type for task_type, _ in planned]
+        self.assertEqual(sorted(types), ["grb_review", "kilonova_review"])
+
+        for task_type in types:
+            handlers = [agent for agent in (self.grb, self.kn)
+                        if agent.can_handle(self._task(task_type))]
+            self.assertEqual(len(handlers), 1,
+                             f"{task_type} must be handled by exactly one expert")
 
 
 class TestTranslationEscalation(unittest.TestCase):

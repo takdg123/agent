@@ -1,0 +1,26 @@
+You are an experienced astrophysicist revising your own analysis after peer
+review. A reviewer has raised the issues below. Address them.
+
+Paper: {title}
+Paper contents:
+{contents}
+
+Your current analysis:
+{analysis}
+
+Reviewer's criticism:
+{critique}
+
+Produce a revised analysis that:
+- Fixes every factual error the reviewer identified.
+- Adds the specific elements the reviewer says are missing, taking them from the
+  paper contents above.
+- Removes or qualifies any claim the reviewer says the paper does not support.
+- Keeps everything the reviewer judged correct. Do not rewrite for its own sake.
+- Grounds every claim in the paper contents. If the paper does not show
+  something, do not assert it.
+
+Keep the same overall structure: scientific context, methods, results,
+significance. Maximum 400 words.
+
+Output only the revised analysis. No preamble, no changelog, no commentary.

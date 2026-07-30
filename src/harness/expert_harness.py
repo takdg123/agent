@@ -16,18 +16,30 @@ from .knowledge_store import KnowledgeStore
 from ..utils import key_numbers
 from ..utils.llm_client import LLMClient
 
+# A critic score below this sends the analysis back to the astrophysicist.
+REVISION_THRESHOLD = 7.0
+MAX_REVISIONS = 2
+DEFAULT_QUALITY = 7.0
+
+
 class ExpertHarness:
     """
     Multi-expert harness for comprehensive paper analysis
-    
+
     Workflow:
-    1. GRB Expert reviews → Specialized GRB analysis
-    2. Kilonova Expert reviews → Specialized kilonova analysis
-    3. Astrophysicist synthesizes → Broader context
-    4. Language Expert translates → Korean summary
-    5. Critic reviews → Quality check
-    6. Writer polishes → Final version
-    7. Memory Manager stores → Learning for future
+    0. Knowledge store recalls semantically similar past papers and topic notes
+    1. Domain experts review, only those whose domain the paper touches, most
+       relevant first, each seeing the reviews already written
+    2. Astrophysicist synthesizes → broader context
+    3. Critic scores; below threshold the astrophysicist revises and is
+       re-reviewed, up to MAX_REVISIONS times, and the best version wins
+    4. Writer polishes the English
+    5. Language Expert translates the FINAL English → Korean
+    6. Key numbers extracted for the top of the report card
+    7. Knowledge store records the paper for future recall
+
+    Translation is last on purpose: deriving Korean from the finished English is
+    what stops the two languages disagreeing.
     """
     
     def __init__(self, config: Any, llm_manager: Any):
@@ -95,6 +107,108 @@ class ExpertHarness:
             return True, True
         return run_grb, run_kilonova
 
+    @classmethod
+    def expert_order(cls, paper: Dict[str, Any], run_grb: bool, run_kilonova: bool) -> List[tuple]:
+        """
+        The experts to run, most relevant first.
+
+        The stronger specialist writes first so the second has something worth
+        responding to, rather than a fixed GRB-then-kilonova order that puts a
+        marginal review ahead of the central one.
+        """
+        haystack = " ".join([
+            paper.get("title") or "",
+            paper.get("abstract") or "",
+            " ".join(paper.get("topic_tags") or []),
+        ]).lower()
+
+        planned = []
+        if run_grb:
+            planned.append((sum(cue in haystack for cue in cls.GRB_CUES),
+                            "grb_review", "GRB Expert"))
+        if run_kilonova:
+            planned.append((sum(cue in haystack for cue in cls.KILONOVA_CUES),
+                            "kilonova_review", "Kilonova Expert"))
+
+        planned.sort(key=lambda entry: entry[0], reverse=True)
+        return [(task_type, label) for _, task_type, label in planned]
+
+    def _run_one(self, task: AgentTask):
+        """Submit one task, run it, and return its result (or None)."""
+        task_id = self.coordinator.submit_task(task)
+        return {r.task_id: r for r in self.coordinator.execute_all_tasks()}.get(task_id)
+
+    def _critique_and_revise(self, paper: Dict[str, Any], analysis: str) -> tuple:
+        """
+        Critique the analysis, and send it back for revision if it falls short.
+
+        Returns:
+            (best_analysis, best_score, critique_of_best)
+
+        The best-scoring version wins, so a revision that makes things worse is
+        discarded rather than shipped.
+        """
+        best = (analysis, DEFAULT_QUALITY, "")
+
+        for attempt in range(MAX_REVISIONS + 1):
+            label = "Critical Review" if attempt == 0 else f"Re-review (revision {attempt})"
+            print(f"\n🎯 {label}...")
+            result = self._run_one(AgentTask(
+                task_type="quality_review",
+                description="Quality review and critique",
+                input_data={"paper": paper, "analysis": analysis},
+                required_capabilities=[AgentCapability.COMPARISON],
+                priority=8
+            ))
+
+            if not (result and result.success):
+                reason = result.error_message if result else "no result returned"
+                print(f"   ❌ Critic FAILED: {reason}")
+                break
+
+            critique = result.output_data.get('critique', '')
+            score = result.output_data.get('quality_score', DEFAULT_QUALITY)
+            print(f"   ✅ Quality Score: {score}/10")
+
+            if score > best[1] or attempt == 0:
+                best = (analysis, score, critique)
+
+            if score >= REVISION_THRESHOLD:
+                break
+            if attempt == MAX_REVISIONS:
+                print(f"   ⚠️  still {score}/10 after {MAX_REVISIONS} revisions; "
+                      f"keeping the best version ({best[1]}/10)")
+                break
+
+            print(f"\n♻️  Revising (score {score} < {REVISION_THRESHOLD})...")
+            revision = self._run_one(AgentTask(
+                task_type="revise",
+                description="Revise analysis after critique",
+                input_data={"paper": paper, "analysis": analysis, "critique": critique},
+                required_capabilities=[AgentCapability.SYNTHESIS],
+                priority=8
+            ))
+
+            revised = (revision.output_data.get('synthesis') or '').strip() \
+                if revision and revision.success else ''
+            if not revised:
+                reason = revision.error_message if revision else "no result returned"
+                print(f"   ⚠️  Revision failed ({reason}); keeping the current version")
+                break
+            print(f"   ✅ Revised ({len(revised)} chars)")
+            analysis = revised
+
+        return best
+
+    @staticmethod
+    def _peer_lines(expert_reviews: List[Dict[str, Any]]) -> List[str]:
+        """Reviews already written, for the next specialist to build on or dispute."""
+        return [
+            f"- Peer review already written by the {review.get('expertise', 'expert')}:\n"
+            f"  {(review.get('expert_review') or '')[:900].strip()}"
+            for review in expert_reviews
+        ]
+
     def analyze_paper_multi_expert(self, paper: Dict[str, Any], use_memory: bool = True) -> Dict[str, Any]:
         """
         Comprehensive multi-expert paper analysis
@@ -131,54 +245,47 @@ class ExpertHarness:
         # Running the kilonova expert on a pure GRB paper cost ~38s and fed an
         # empty review into the synthesis.
         run_grb, run_kn = self.select_experts(paper)
+        planned = self.expert_order(paper, run_grb, run_kn)
 
-        grb_task_id = kn_task_id = None
-        if run_grb:
-            print("\n🌟 Step 1: GRB Expert Review...")
-            grb_task_id = self.coordinator.submit_task(AgentTask(
-                task_type="grb_review",
-                description="GRB expert analysis",
-                input_data={"paper": paper, "previous_analysis": recalled_lines},
-                required_capabilities=[AgentCapability.TEXT_ANALYSIS],
-                priority=10
-            ))
-        else:
-            print("\n⏭️  Step 1: GRB Expert skipped (not a GRB paper)")
+        if not run_grb:
+            print("\n⏭️  GRB Expert skipped (not a GRB paper)")
+        if not run_kn:
+            print("⏭️  Kilonova Expert skipped (not a kilonova/merger paper)")
 
-        if run_kn:
-            print("💫 Step 2: Kilonova Expert Review...")
-            kn_task_id = self.coordinator.submit_task(AgentTask(
-                task_type="kilonova_review",
-                description="Kilonova expert analysis",
-                input_data={"paper": paper, "previous_analysis": recalled_lines},
-                required_capabilities=[AgentCapability.TEXT_ANALYSIS],
-                priority=10
-            ))
-        else:
-            print("⏭️  Step 2: Kilonova Expert skipped (not a kilonova/merger paper)")
-
-        # Executed sequentially: both experts share one 42GB model, so running
-        # them concurrently would thrash VRAM.
-        results = self.coordinator.execute_all_tasks()
-        result_map = {r.task_id: r for r in results}
-
-        # Collect expert reviews
+        # Run specialists in relevance order, each seeing the reviews already
+        # written. They share one 42GB model, so this costs no extra wall-clock
+        # over running them blind - it just makes the second review better informed.
         expert_reviews = []
-        grb_result = result_map.get(grb_task_id) if grb_task_id else None
-        kn_result = result_map.get(kn_task_id) if kn_task_id else None
+        confidences = {}
+        for step, (task_type, label) in enumerate(planned, 1):
+            print(f"\n🌟 Step {step}: {label} Review"
+                  f"{' (sees prior review)' if expert_reviews else ''}...")
+            task_id = self.coordinator.submit_task(AgentTask(
+                task_type=task_type,
+                description=f"{label} analysis",
+                input_data={
+                    "paper": paper,
+                    "previous_analysis": recalled_lines + self._peer_lines(expert_reviews),
+                },
+                required_capabilities=[AgentCapability.TEXT_ANALYSIS],
+                priority=10
+            ))
+            result_map = {r.task_id: r for r in self.coordinator.execute_all_tasks()}
+            result = result_map.get(task_id)
 
-        for label, task_id, result in (("GRB Expert", grb_task_id, grb_result),
-                                       ("Kilonova Expert", kn_task_id, kn_result)):
-            if task_id is None:
-                continue
             if result and result.success:
                 expert_reviews.append(result.output_data)
-                print(f"   ✅ {label} (confidence: {result.output_data.get('confidence', 0):.2f})")
+                confidence = result.output_data.get('confidence', 0)
+                confidences[task_type] = confidence
+                print(f"   ✅ {label} (confidence: {confidence:.2f})")
             else:
                 # Never silent: a dead expert went unnoticed for weeks.
                 reason = result.error_message if result else "no result returned"
                 print(f"   ❌ {label} FAILED: {reason}")
-        
+
+        grb_confidence = confidences.get("grb_review", 0)
+        kn_confidence = confidences.get("kilonova_review", 0)
+
         # Step 3: Astrophysicist Synthesis
         print("\n🔭 Step 3: Astrophysicist Synthesis...")
         synth_task = AgentTask(
@@ -191,12 +298,7 @@ class ExpertHarness:
             required_capabilities=[AgentCapability.SYNTHESIS],
             priority=9
         )
-        synth_task_id = self.coordinator.submit_task(synth_task)
-        
-        results = self.coordinator.execute_all_tasks()
-        result_map = {r.task_id: r for r in results}
-        
-        synth_result = result_map.get(synth_task_id)
+        synth_result = self._run_one(synth_task)
         english_analysis = ""
         if synth_result and synth_result.success:
             english_analysis = synth_result.output_data.get('synthesis', '')
@@ -206,66 +308,36 @@ class ExpertHarness:
             # Without a synthesis there is nothing to report or translate.
             raise RuntimeError(f"synthesis failed: {reason}")
         
-        # Step 4: Critic Review (English only; nothing is translated yet)
-        print("\n🎯 Step 4: Critical Review...")
-        critic_task = AgentTask(
-            task_type="quality_review",
-            description="Quality review and critique",
+        # Step 4: critique, and revise until the critic is satisfied.
+        # Previously a single pass, and a LOW score *skipped* the polish - so the
+        # weakest analyses got the least attention, which is backwards.
+        english_analysis, quality_score, critique = self._critique_and_revise(
+            paper, english_analysis
+        )
+
+        # Step 5: Writer polishes the English. Always - a weak analysis needs the
+        # writer more, not less.
+        final_english = english_analysis
+        print("\n✍️  Step 5: Final Polish (English)...")
+        writer_result = self._run_one(AgentTask(
+            task_type="polish",
+            description="Final polishing",
             input_data={
                 "paper": paper,
-                "analysis": english_analysis
+                "analysis": english_analysis,
+                "critique": critique
             },
-            required_capabilities=[AgentCapability.COMPARISON],
-            priority=8
-        )
-        critic_task_id = self.coordinator.submit_task(critic_task)
-
-        results = self.coordinator.execute_all_tasks()
-        result_map = {r.task_id: r for r in results}
-
-        critic_result = result_map.get(critic_task_id)
-        critique = ""
-        quality_score = 7.0
-        if critic_result and critic_result.success:
-            critique = critic_result.output_data.get('critique', '')
-            quality_score = critic_result.output_data.get('quality_score', 7.0)
-            print(f"   ✅ Quality Score: {quality_score}/10")
+            required_capabilities=[AgentCapability.SYNTHESIS],
+            priority=7
+        ))
+        if writer_result and writer_result.success:
+            polished = (writer_result.output_data.get('polished_content') or '').strip()
+            if polished:
+                final_english = polished
+                print(f"   ✅ Polished ({len(final_english)} chars)")
         else:
-            reason = critic_result.error_message if critic_result else "no result returned"
-            print(f"   ❌ Critic FAILED: {reason}")
-
-        # Step 5: Writer polishes the English
-        final_english = english_analysis
-
-        if quality_score >= 6.0:
-            print("\n✍️  Step 5: Final Polish (English)...")
-            writer_task = AgentTask(
-                task_type="polish",
-                description="Final polishing",
-                input_data={
-                    "paper": paper,
-                    "analysis": english_analysis,
-                    "critique": critique
-                },
-                required_capabilities=[AgentCapability.SYNTHESIS],
-                priority=7
-            )
-            writer_task_id = self.coordinator.submit_task(writer_task)
-
-            results = self.coordinator.execute_all_tasks()
-            result_map = {r.task_id: r for r in results}
-
-            writer_result = result_map.get(writer_task_id)
-            if writer_result and writer_result.success:
-                polished = (writer_result.output_data.get('polished_content') or '').strip()
-                if polished:
-                    final_english = polished
-                    print(f"   ✅ Polished ({len(final_english)} chars)")
-            else:
-                reason = writer_result.error_message if writer_result else "no result returned"
-                print(f"   ⚠️  Polish failed ({reason}); keeping the synthesis")
-        else:
-            print(f"\n⚠️  Quality too low ({quality_score}/10), skipping final polish")
+            reason = writer_result.error_message if writer_result else "no result returned"
+            print(f"   ⚠️  Polish failed ({reason}); keeping the synthesis")
 
         # Step 6: Translate the FINAL English. Translating last is what keeps the
         # two languages saying the same thing - previously Korean was derived from
@@ -281,12 +353,7 @@ class ExpertHarness:
             required_capabilities=[AgentCapability.SUMMARIZATION],
             priority=6
         )
-        lang_task_id = self.coordinator.submit_task(lang_task)
-
-        results = self.coordinator.execute_all_tasks()
-        result_map = {r.task_id: r for r in results}
-
-        lang_result = result_map.get(lang_task_id)
+        lang_result = self._run_one(lang_task)
         final_korean = ""
         if lang_result and lang_result.success:
             final_korean = lang_result.output_data.get('korean_summary', '')
@@ -330,8 +397,8 @@ class ExpertHarness:
             'used_memory': context.get('has_history', False),
             'text_source': (paper.get('contents') or {}).get('source', 'abstract'),
             'execution_time': execution_time,
-            'grb_confidence': grb_result.output_data.get('confidence', 0) if grb_result and grb_result.success else 0,
-            'kilonova_confidence': kn_result.output_data.get('confidence', 0) if kn_result and kn_result.success else 0
+            'grb_confidence': grb_confidence,
+            'kilonova_confidence': kn_confidence
         }
     
     def batch_analyze_papers(

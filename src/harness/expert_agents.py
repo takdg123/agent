@@ -81,7 +81,7 @@ class BaseExpertAgent(BaseAgent):
             body = str(previous_analysis)
         if not body.strip():
             return ""
-        return f"Context from previously analysed papers:\n{body}"
+        return f"Context you may use:\n{body}"
 
 
 class GRBExpertAgent(BaseExpertAgent):
@@ -215,8 +215,9 @@ class AstrophysicistAgent(BaseExpertAgent):
         self.capabilities.append(AgentCapability.SYNTHESIS)
     
     def can_handle(self, task: AgentTask) -> bool:
-        return (set(task.required_capabilities).issubset(set(self.capabilities)) and 
-                task.task_type in ["analyze_paper", "synthesize", "contextualize"])
+        return (set(task.required_capabilities).issubset(set(self.capabilities)) and
+                task.task_type in ["analyze_paper", "synthesize", "contextualize",
+                                   "revise"])
     
     def execute(self, task: AgentTask) -> AgentResult:
         start_time = time.time()
@@ -225,13 +226,22 @@ class AstrophysicistAgent(BaseExpertAgent):
         try:
             paper = task.input_data.get("paper", {})
             expert_reviews = task.input_data.get("expert_reviews", [])
-            
-            prompt = self.prompt_loader.get_astrophysicist_prompt(
-                title=paper.get('title', 'Unknown'),
-                authors=', '.join(paper.get('authors', [])[:5]),
-                contents=self._paper_content(paper),
-                expert_reviews=self._format_expert_reviews(expert_reviews)
-            )
+
+            if task.task_type == "revise":
+                # Same agent, acting on the critic's findings rather than starting over.
+                prompt = self.prompt_loader.get_revision_prompt(
+                    title=paper.get('title', 'Unknown'),
+                    contents=self._paper_content(paper, limit=8000),
+                    analysis=task.input_data.get("analysis", ""),
+                    critique=task.input_data.get("critique", "")
+                )
+            else:
+                prompt = self.prompt_loader.get_astrophysicist_prompt(
+                    title=paper.get('title', 'Unknown'),
+                    authors=', '.join(paper.get('authors', [])[:5]),
+                    contents=self._paper_content(paper),
+                    expert_reviews=self._format_expert_reviews(expert_reviews)
+                )
 
             result = self._query_llm(prompt)
             
