@@ -64,6 +64,13 @@ class TestGenerateRaises(unittest.TestCase):
         with patch("requests.post", return_value=FakeResponse(200, {"response": "an analysis"})):
             self.assertEqual(self.client.generate("hi"), "an analysis")
 
+    def test_thinking_disabled_in_payload(self):
+        # qwen3.x thinks by default: a one-line translation took 38s with
+        # thinking on and 1s with it off. The pipeline never needs the trace.
+        with patch("requests.post", return_value=FakeResponse(200, {"response": "ok"})) as post:
+            self.client.generate("hi")
+        self.assertIs(post.call_args.kwargs["json"]["think"], False)
+
     def test_error_string_never_returned(self):
         """No failure mode may yield a string that looks like prose."""
         with patch("requests.post", return_value=FakeResponse(500, {})):

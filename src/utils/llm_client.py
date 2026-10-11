@@ -49,7 +49,11 @@ class LLMClient:
             LLMError: on transport failure, non-200 status, or empty output
         """
         target = model or self.model
-        payload = {"model": target, "prompt": prompt, "stream": False}
+        # Thinking models (qwen3.x) reason at length before answering unless
+        # told not to: 38s vs 1s for a one-line translation. The trace is
+        # never used, and non-thinking models accept the flag.
+        payload = {"model": target, "prompt": prompt, "stream": False,
+                   "think": False}
         if format:
             payload["format"] = format
         if options:
